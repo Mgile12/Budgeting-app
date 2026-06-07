@@ -92,11 +92,12 @@ Five Dexie tables — kept minimal on purpose. Goals collapse into envelopes; ta
 
 **Editing a logged transaction:** tap the transaction row in an envelope's recent list → modal with amount, envelope, description. v1 supports amount + envelope reassignment only — no bulk edit, no delete-and-re-add. Save runs a single `db.transaction('rw', ['transactions', 'envelopes'])` that reverses the old delta from the old envelope, applies the new delta to the new envelope, and updates the transaction row. `paycheck_id` is preserved on edit unless the envelope changes; if it changes, `paycheck_id` is preserved but `paychecks.allocation_snapshot` is NOT rewritten — the snapshot is a frozen record of what was proposed and accepted, separate from the editable ledger.
 
-**Three views (only three)**
+**Four views.** **Log is the default landing tab on every open** — the hot path you hit 5–15× per day. Other tabs are 1–2× per month.
 
-1. **Home** — envelope tile grid. Each tile shows name, current balance, progress ring (only for goal envelopes with a target), color band. Goal envelope hitting 100% = tile glows (confetti deferred to v1.1). Tap a tile → quick-log modal.
-2. **Log** — combo input. Top row of 4–6 quick-tap envelope tiles, sourced from `app_config.top_tiles` (your manual pin order; static in v1 — most-frequent auto-rotation deferred to v1.1, see Open Questions). Free-text input below the tile row handles everything else ("amex 240 dinner"). Tap tile → number pad → save. Or type → LLM parse → confirmation chip → save.
+1. **Home** — envelope tile grid. Each tile shows name, current balance, progress ring (only for goal envelopes with a target), color band. Goal envelope hitting 100% = tile glows (confetti deferred to v1.1). Tap a tile → expanded recent-transactions list + quick-log. On first boot (envelopes empty), a single sub-grid line reads: **"First paycheck? Tap + to allocate."** No CTA button, no modal — just the hint. Day-0 render is instant; no fade-in animation.
+2. **Log** — combo input. Top row of 4–6 quick-tap envelope tiles, sourced from `app_config.top_tiles` (your manual pin order; static in v1 — most-frequent auto-rotation deferred to v1.1, see Open Questions). Free-text input below the tile row handles everything else ("amex 240 dinner"). Tap tile → number pad → save. Or type → LLM parse → confirmation chip → save. A subtle 8px corner icon appears on the input bar when the last LLM call errored — auto-clears on the next successful call. No alarm chip.
 3. **Payday** — landing screen when "got paid X" is logged or the "+ paycheck" button is hit. LLM advisor receives: paycheck amount, app_config rules, current envelope balances, upcoming bills (next 30 days), goal pacing. Returns `[{envelope, amount, reason}]`. UI shows paycheck node at top, target envelopes at bottom, animated money tokens flying top-to-bottom (3–5s). Tally line at bottom shows the discretionary remainder. Accept → writes transactions and updates balances. Edit → adjust amounts inline before accept.
+4. **Settings** — gear icon top-right of Home. Houses: Export JSON button (download single backup file containing all five tables), "Last backup: N days ago" quiet chip, total-budget overview, schema_version. Visited 1–2× per month.
 
 **Config (`config.yml` at repo root)**
 
@@ -173,13 +174,16 @@ Two LLM call types — that's all:
 
 **`discretionary_remainder` destination:** `app_config.discretionary_envelope_id` (resolved from `discretionary_envelope` name in `config.yml` at seed time). Whatever cents are left after the earlier steps are written to this envelope.
 
+**Under-paycheck behavior.** When `tax + bills + subs + goal contributions` exceeds `paycheck_cents`, the rules engine **truncates the last unmet rule(s).** Bills and tax are honored first (in `allocation_rule` order). Goals get $0 if money runs out. Discretionary stays at $0. A yellow chip renders at the top of the proposal: **"Bills + tax covered. Goals deferred this paycheck. Discretionary: $0."** Truthful, deterministic, easy to reason about. No silent proportional scaling, no "insufficient paycheck" refusal screen.
+
 No other LLM calls in v1. No proactive scheduling. No real-time overspend flagging. Those are v2.
 
 **Animation work (build LAST)**
 
-- **Envelope tile fill bar** — Framer Motion `animate` on a progress bar when balance changes.
-- **Goal completion** — CSS glow on the tile when `current_balance` first crosses `target_balance`. Uses the `celebrated_at` field on `envelopes` to fire exactly once per crossing — set on the crossing transaction, cleared if balance later drops below target. Confetti deferred to v1.1; CSS glow alone is enough for v1.
-- **Payday flow** — paycheck node at top, target envelopes at bottom, money-token components animated origin→destination with Framer Motion. Stagger by allocation order. Total ~3–5 seconds. Driven by the in-memory proposal object, not by Dexie live queries.
+- **Envelope tile fill bar** — Framer Motion `animate` on a progress bar when balance changes. Reverses on transaction edit (same component, opposite direction).
+- **Goal completion** — CSS glow on the tile when `current_balance` first crosses `target_balance`. Uses the `celebrated_at` field on `envelopes` to fire exactly once per crossing — set on the crossing transaction, cleared if balance later drops below target. Confetti deferred to v1.1; CSS glow alone is enough for v1. **Timing rules:** if the crossing happens during a payday allocation, the glow fires on the post-accept Home re-render, **not during the payday animation** — the payday show belongs to the paycheck. Multiple goals hitting target after one accept stagger 1.5s apart in `order_index` order.
+- **Payday flow** — paycheck node at top, target envelopes at bottom, money-token components animated origin→destination with Framer Motion. Token text size scales by `log(amount_cents)`. Token color matches destination envelope color. One token at a time, 300ms stagger between tokens. Total ~3–5 seconds. Driven by the in-memory proposal object, not by Dexie live queries. **Silent by default** (no audio).
+- **Reduced motion gate.** All animations respect `@media (prefers-reduced-motion: reduce)`: money tokens don't fly (rows fade in at the same 300ms stagger), envelope fill bar snaps instead of animating, goal-completion glow becomes a non-pulsing colored border. Same information, same timing cues, no movement.
 
 **Stack pick (final)**
 
@@ -190,7 +194,8 @@ No other LLM calls in v1. No proactive scheduling. No real-time overspend flaggi
 - Zod (LLM response validation)
 - js-yaml — `config.yml` imported as raw text via Vite's `?raw` suffix (`import yamlText from './config.yml?raw'`), parsed at boot. Accepted tradeoff: editing config requires `npm run dev` to pick up the change (Vite HMR handles this on save). For a "real" hot-edit story, switch to `fetch('/config.yml')` later — out of scope for v1.
 - Anthropic SDK — key in `.env.local` as `VITE_ANTHROPIC_KEY`; constructor needs `dangerouslyAllowBrowser: true`. Pinned model: `claude-haiku-4-5-20251001`. Per-call params: `max_tokens: 512` for text-parse, `max_tokens: 2048` for payday proposal; 10-second timeout via `AbortController` on both. Client-side rate guard: at most one parse call in flight at a time, 500ms minimum spacing between calls (debounced from the input). Only acceptable in-bundle because access is Tailscale-gated. Set a hard monthly spend cap in the Anthropic console as belt-and-suspenders: a stolen/lost device on the Tailnet still can't run up your bill past the cap.
-- **Navigation:** state-based view switch (single `useState<'home' | 'log' | 'payday'>` at app root), no router. Three views don't earn a dependency.
+- **Navigation:** state-based view switch (single `useState<'home' | 'log' | 'payday' | 'settings'>` at app root), no router. Four views don't earn a dependency. Default view on every mount is `'log'`.
+- **Two-tab guard.** `BroadcastChannel('budget-app-v1')` pings "I'm open" on mount. A second tab detecting an existing tab renders **"Already open in another tab. Refresh to take over."** and stays read-only until refreshed. Prevents accidental double-logging when phone and laptop tabs are open simultaneously. ~20 lines of code.
 - No backend, no auth, no deployment.
 
 **PWA caveat in one line:** "Add to Home Screen" works over HTTP on iOS but behaves as a webclip, not a true PWA install. Full PWA path (service worker + install prompt + offline) is parked in Open Questions for v1.5.
