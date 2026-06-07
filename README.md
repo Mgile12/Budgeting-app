@@ -1,21 +1,32 @@
 # Budgeting-app
 
-Personal envelope-style budgeting app. Manual logging, LLM as advisor (not agent), light animations on payday and goal completion. n=1 — built for one person to use.
+Personal envelope-style budgeting app. Self-hosted on Mitch's own domain. Manual logging, LLM as advisor (not agent). Built around one real-life cycle: a monthly retainer funds the month; bonuses accelerate the nearest goal. A Telegram coach whispers when something needs attention; a monthly review tells the truth in plain language. n=1 — built for one person to use.
+
+## Docs (all current as of 2026-06-08)
 
 Three docs, read in this order:
 
-1. **[USER-STORIES.md](USER-STORIES.md)** — current product shape. Retainer-to-retainer cycle, two income flows (retainer + bonus), Telegram coach, projection engine, monthly review. Source of truth for what v1 *is*.
-2. **[DESIGN.md](DESIGN.md)** — technical design. Data model, LLM contracts, animation spec, build order. **Note:** parts now diverge from USER-STORIES.md (architecture, income model, scheduled jobs) — needs reconciliation before build.
-3. **[FEATURES.md](FEATURES.md)** — user-journey walkthrough of the v1 features in three arcs (Calm, Show, Edges). Also pre-dates the user-stories evolution.
+1. **[USER-STORIES.md](USER-STORIES.md)** — product source of truth. Epics, stories, open decisions for the PRD, screen map.
+2. **[DESIGN.md](DESIGN.md)** — technical contract. Architecture (self-hosted Approach B), data model, LLM contracts, animation spec, backend + frontend stack, deployment, build order.
+3. **[FEATURES.md](FEATURES.md)** — user-journey walkthrough in three arcs (The Calm, The Show, The Trust Layer). 10 moments deep-dived with sequences, states, edge cases.
+
+`reference/` is for visual references (screenshots, mockups, palette refs) — drop images there as you collect them.
 
 ## Status
 
-Pre-build. User stories drafted; DESIGN.md and FEATURES.md need a reconciliation pass to match the retainer-cycle + Approach B architecture. Next step is resolving Open Decisions in USER-STORIES.md and writing `config.yml`.
+Pre-build. Design aligned across all three docs. Next steps in order:
 
-## Stack (current direction)
+1. Resolve remaining Open Questions in DESIGN.md (hosting choice, domain, Telegram bot name).
+2. Write `config.yml` by hand — real envelopes, recurring, tax rate, goals, retainer amount + cycle start. This is **the assignment** from DESIGN.md.
+3. Provision the VM + domain + Caddy. Backend scaffold. Then build per the Next Steps in DESIGN.md.
 
-- Vite + React + TypeScript, Tailwind CSS, Framer Motion (frontend unchanged)
-- Self-hosted on Mitch's own domain over HTTPS
-- Always-on backend (Bun or Node) — holds the Anthropic key server-side, runs scheduled jobs, hosts the Telegram coach
-- Shared datastore both web app and backend read/write (SQLite via Drizzle on the backend, the web app talks to the backend instead of writing IndexedDB directly)
-- Anthropic SDK (`claude-haiku-4-5-20251001`) — server-side only
+## Stack
+
+- **Frontend** — Vite + React + TypeScript, Tailwind CSS, Framer Motion, Zod, React Query
+- **Backend** — Bun + Hono + Drizzle ORM + SQLite, `@anthropic-ai/sdk` server-side
+- **Coach** — Telegram Bot API (outbound only, via direct HTTP)
+- **Hosting** — Mitch's own domain, Caddy + Let's Encrypt for HTTPS, systemd-managed Bun process
+- **LLM** — Claude Haiku (`claude-haiku-4-5-20251001`), four call types: parse, allocation propose, coach narrate, review narrate
+- **Backup** — nightly SQLite snapshot to Tailscale-shared folder or S3, plus manual JSON export in Settings
+
+See DESIGN.md for the full technical breakdown.
